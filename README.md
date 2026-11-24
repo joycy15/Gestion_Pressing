@@ -1,4 +1,4 @@
-@'
+
 # 🧺 Gestion_Pressing
 
 > Application de bureau modulaire développée en équipe sous **.NET 10 / C# Windows Forms** et **SQL Server Express**, dédiée à la gestion complète du cycle d'un pressing (dépôt, suivi de traitement, paiements, retraits, notifications et tableau de bord).
