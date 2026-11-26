@@ -1,60 +1,147 @@
+# PressiGest – Gestion de pressing
 
-# 🧺 Gestion_Pressing
+Application de bureau Windows qui suit chaque vêtement **du dépôt au retrait** :
+le caissier enregistre la commande avec son service, l'application l'envoie au laveur
+ou directement au repasseur, le client reçoit un email quand sa commande est prête,
+et une commande non retirée un mois après est annoncée puis vendue.
 
-> Application de bureau modulaire développée en équipe sous **.NET 10 / C# Windows Forms** et **SQL Server Express**, dédiée à la gestion complète du cycle d'un pressing (dépôt, suivi de traitement, paiements, retraits, notifications et tableau de bord).
-
----
-
-## 💡 Vision du Projet
-
-**Gestion_Pressing** remplace le suivi manuel sur cahier et les tickets papier au comptoir d'un pressing mono-agence. L'objectif est d'assurer une traçabilité fiable de chaque article du dépôt jusqu'au retrait, d'éviter toute erreur de facturation en **FCFA**, d'encadrer les encaissements (au dépôt, au retrait ou en deux fois) et d'alerter le gérant en temps réel sur les commandes prêtes ou non retirées après 14 jours.
-
----
-
-## 🚀 Fonctionnalités Clés
-
-* 🔐 **Authentification & Paramètres (`Membre 2`)** : connexion sécurisée avec mot de passe haché, gestion des comptes (`Gérant` / `Caissier`), contrôle d'accès par rôle et configuration des types de vêtements et tarifs fixes (FCFA).
-* 👥 **Clients & Suivi des Commandes (`Membre 3`)** : gestion des fiches clients (unicité par numéro de téléphone), historique par client, liste filtrable des commandes, changement de statut (`Déposée` → `Prête` → `Retirée`) et annulation réservée au gérant.
-* 🧾 **Dépôt & Paiement au Dépôt (`Membre 4`)** : création d'une commande multi-lignes avec copie du prix unitaire et observations, calcul automatique du total et de la date de retrait prévue, enregistrement transactionnel SQL, numéro de ticket unique (`PR-2026-000123`) et impression via `PrintDocument`.
-* 📦 **Retrait, Notifications & Tableau de Bord (`Membre 5`)** : recherche par numéro de ticket ou téléphone, encaissement du solde restant, verrouillage du retrait tant que le reste à payer n'est pas à `0`, alertes (`Prête` et `Non retirée` > 14 jours) et statistiques journalières par mode de paiement.
-* 🗄️ **Base de Données & Socle Commun (`Membre 1`)** : schéma SQL Server à 7 tables avec contraintes d'intégrité, jeu de données initiales, bibliothèque partagée `Pressing.Models` et classe de connexion ADO.NET réutilisable.
+Projet de groupe – Keyce Informatique & Intelligence Artificielle, Bachelor 2.
+Référence fonctionnelle : **Cahier des charges v2** (dossier `docs/`).
 
 ---
 
-## 🛠️ Stack Technique
+## Fonctionnalités
 
-* **Langage & Framework** : C# / .NET 10 (LTS) — Windows Forms
-* **Base de données & Accès** : SQL Server Express & ADO.NET (`SqlConnection`, `SqlCommand`, `SqlTransaction`, requêtes paramétrées)
-* **Impression** : `System.Drawing.Printing.PrintDocument` (tickets de dépôt)
-* **Architecture** : Solution en 3 couches strictes (`Pressing.UI`, `Pressing.BLL`, `Pressing.DAL`) + bibliothèque d'entités partagées (`Pressing.Models`)
-* **Gestion de version & Collaboration** : Git & GitHub (branches `feature/mX-...` fusionnées sur `main`)
+| Module | Ce qu'il fait |
+| --- | --- |
+| Connexion et utilisateurs | Connexion par identifiant, 4 rôles, menu adapté au rôle |
+| Clients | Fiche client (téléphone obligatoire, email facultatif), historique, reste à payer |
+| Services et tarifs | 4 services, prix fixe par vêtement **et** par service (grille de tarifs) |
+| Dépôt | Client, service, vêtements, total automatique, paiement, ticket imprimé |
+| Atelier | Files du laveur et du repasseur, express en premier, notification à chaque nouvelle commande |
+| Paiements | Seulement notés : espèces, Orange Money, MTN Mobile Money ; paiement en 1 ou 2 fois |
+| Retrait | Recherche par ticket ou téléphone, paiement du reste, validation |
+| Emails | « Commande prête » et « Avertissement de mise en vente », envoyés automatiquement |
+| Ventes | Vente des vêtements non retirés après avertissement et délai de grâce |
+| Tableau de bord | Commandes par statut, encaissé du jour, alertes |
+
+## Rôles
+
+| Rôle | Ce qu'il fait |
+| --- | --- |
+| Administrateur (gérant) | Tout, plus : comptes, services, prix, paramètres, annulation, ventes |
+| Caissier | Clients, dépôts, paiements, retraits, tickets |
+| Laveur | Reçoit les commandes à laver, commence et termine le lavage |
+| Repasseur | Reçoit les commandes lavées et les « repassage seul », termine le repassage |
+
+## Services et circuit d'une commande
+
+| Service | Circuit |
+| --- | --- |
+| Lavage + repassage | Laveur → Repasseur |
+| Lavage express | Laveur → Repasseur, **prioritaire** |
+| Nettoyage à sec | Laveur → Repasseur |
+| Repassage seul | **Directement** le repasseur |
+
+```
+Déposée → En lavage → En repassage → Prête → Retirée
+                          ↑             │
+      (repassage seul) ───┘             └─ 30 jours sans retrait → Avertie → 7 jours → Vendue
+Annulée : possible tant que la commande n'est ni retirée ni vendue (administrateur)
+```
+
+- Passage à **Prête** → email « commande prête » au client (ou notification à l'administrateur si le client n'a pas d'email).
+- **30 jours** après « Prête » sans retrait → email d'avertissement, statut **Avertie**.
+- **7 jours** de grâce après l'avertissement → l'administrateur peut marquer la commande **Vendue**.
 
 ---
 
-## 👥 L'Équipe & Répartition des Rôles
+## Technologies
 
-Membres du projet : **Joycy**, **William**, **Apostel**, **Layelle**, **Travis** *(affectation finale en cours — seul le Membre 4 est confirmé)*
+| Élément | Choix |
+| --- | --- |
+| Langage, plateforme | C#, **.NET 10** |
+| Interface | Windows Forms |
+| Base de données | **PostgreSQL 16+**, outil pgAdmin 4 |
+| Accès aux données | ADO.NET avec **Npgsql**, requêtes paramétrées |
+| Emails | SMTP (ex. Gmail + mot de passe d'application), bibliothèque **MailKit** |
+| Mots de passe | PBKDF2-SHA256 avec sel (inclus dans .NET) |
+| Outils | Visual Studio 2026, pgAdmin 4, Git / GitHub |
 
-| Membre | Nom | Rôle | Périmètre & Écrans | Règles de gestion clés | Préfixe de branche |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Membre 1** | `[À compléter]` | Base de données et socle commun | Script SQL (7 tables), `Pressing.Models`, classe connexion ADO.NET, `.gitignore`, merges | Contraintes PK/FK/UNIQUE, intégrité schéma | `feature/m1-socle-bdd` |
-| **Membre 2** | `[À compléter]` | Connexion, utilisateurs et paramètres | `Connexion`, `Menu principal`, `Paramètres` (comptes & tarifs vêtements) | `RG5`, hachage mot de passe, contrôle des rôles | `feature/m2-auth-params` |
-| **Membre 3** | `[À compléter]` | Clients et suivi des commandes | `Clients`, `Commandes` (recherche, filtres, statuts `Déposée` → `Prête`, annulation gérant) | `RG1`, `RG5`, `RG11`, `RG13` | `feature/m3-clients-suivi` |
-| **Membre 4** | **William** | Dépôt et paiement au dépôt | `Nouveau dépôt` (lignes, calcul total, situation/mode paiement, ticket unique, impression) | `RG2`, `RG3`, `RG4`, `RG6`, `RG7`, `RG8`, `RG9` | `feature/m4-depot-paiement` |
-| **Membre 5** | `[À compléter]` | Retrait, notifications et tableau de bord | `Retrait`, `Notifications`, `Tableau de bord` | `RG10`, `RG11`, `RG12`, agrégations CA du jour | `feature/m5-retrait-dashboard` |
+## Structure du dépôt
 
----
-
-## 📁 Structure du Dépôt
-
-```text
+```
 Gestion_Pressing/
-├── database/                      # Scripts SQL Server (création des 7 tables, contraintes, données de test)
-├── docs/                          # Cahier des charges et documentation technique
+├── database/                 Scripts PostgreSQL (création des tables, données de test)
+├── docs/                     Cahier des charges, diagrammes UML, maquettes
 ├── src/
-│   ├── Pressing.Models/           # Entités partagées (Utilisateur, Client, TypeVetement, Commande, LigneCommande, Paiement, Notification)
-│   ├── Pressing.DAL/              # Accès aux données ADO.NET (requêtes SQL paramétrées, transactions)
-│   ├── Pressing.BLL/              # Logique métier, calculs financiers et validation des règles RG1 à RG13
-│   └── Pressing.UI/               # Formulaires Windows Forms, contrôles et impression PrintDocument
-├── .gitignore                     # Fichiers ignorés (.NET / Visual Studio / bin / obj)
-└── README.md                      # Présentation du projet, architecture et répartition de l'équipe
+│   ├── Pressing.Models/      Classes des tables + énumérations
+│   ├── Pressing.DAL/         Connexion PostgreSQL, requêtes, transactions
+│   ├── Pressing.BLL/         Règles de gestion, mots de passe, envoi des emails
+│   └── Pressing.UI/          Écrans Windows Forms (projet de démarrage)
+├── appsettings.example.json  Modèle de configuration (sans mot de passe)
+├── .gitignore
+└── README.md
+```
+
+**Règle d'architecture :** `UI → BLL → DAL → base`. Aucune requête SQL dans les formulaires.
+
+---
+
+## Installation (chaque membre)
+
+1. Installer **Visual Studio 2026** (charge « Développement .NET Desktop »), le **SDK .NET 10** et **PostgreSQL 16+** (avec pgAdmin 4).
+2. Cloner le dépôt et se placer sur la branche commune :
+   ```bash
+   git clone https://github.com/joycy15/Gestion_Pressing.git
+   cd Gestion_Pressing
+   git switch pressing
+   ```
+3. Dans **pgAdmin** : créer la base `pressing_db`, puis dans son *Query Tool* exécuter dans l'ordre les scripts du dossier `database/`.
+4. Copier `appsettings.example.json` en **`src/Pressing.UI/appsettings.json`**, mettre votre mot de passe PostgreSQL
+   (et les identifiants du compte email), puis dans Visual Studio : *Propriétés → Copier dans le répertoire de sortie : Copier si plus récent*.
+   **Ce fichier ne va jamais sur GitHub.**
+5. Ouvrir la solution, définir **Pressing.UI** comme projet de démarrage, lancer avec **F5**.
+
+### Comptes de test
+
+| Identifiant | Mot de passe | Rôle |
+| --- | --- | --- |
+| admin | Admin@2026 | Administrateur |
+| caissier1 | Caisse@2026 | Caissier |
+| laveur1 | Laveur@2026 | Laveur |
+| repasseur1 | Repasse@2026 | Repasseur |
+
+À changer avant la démonstration.
+
+---
+
+## Conventions
+
+- **Base de données** : noms en minuscules avec `_` (`id_commande`, `numero_ticket`).
+- **C#** : `PascalCase` (`IdCommande`, `NumeroTicket`).
+- Statuts et rôles stockés **sans accents** : `Deposee`, `EnLavage`, `EnRepassage`, `Prete`, `Avertie`, `Retiree`, `Vendue`, `Annulee` · `Administrateur`, `Caissier`, `Laveur`, `Repasseur`.
+- Montants en **FCFA**, nombres entiers.
+
+## Répartition du travail
+
+| Membre | Partie |
+| --- | --- |
+| Membre 1 (Joycy) | Base de données, Pressing.Models, Pressing.DAL |
+| Membre 2 | Connexion, menu par rôle, utilisateurs, services et tarifs, paramètres, tableau de bord |
+| Membre 3 | Clients, nouveau dépôt, paiement au dépôt, ticket |
+| Membre 4 | Écrans Lavage et Repassage, liste des commandes, historique, annulation |
+| Membre 5 | Retrait, emails (MailKit), notifications, avertissements et ventes |
+
+## Travailler avec Git
+
+- Branche commune : **`pressing`**. On ne travaille jamais directement dessus.
+- Chacun crée sa branche à partir de `pressing` :
+  ```bash
+  git fetch
+  git switch -c votreprenom origin/pressing
+  ```
+- Avant de commencer : `git pull origin pressing`.
+- Commits courts et clairs : `git commit -m "Ajout de la recherche client"`.
+- Pour partager : `git push`, puis **Pull Request `votreprenom` → `pressing`** sur GitHub.
+- Ne jamais envoyer `appsettings.json`, `bin/`, `obj/`, `.vs/`.

@@ -1,0 +1,43 @@
+# ===================== Visual Studio / .NET =====================
+.vs/
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ll]og/
+[Ll]ogs/
+TestResults/
+packages/
+*.nupkg
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.rsuser
+*.cache
+*.tmp
+*.log
+.idea/
+.vscode/
+
+# ============ Configuration locale (mots de passe) ==============
+# Chacun copie appsettings.example.json en appsettings.json sur son PC.
+# appsettings.json contient le mot de passe PostgreSQL et celui du compte email :
+# il ne doit JAMAIS aller sur GitHub.
+appsettings.json
+appsettings.*.json
+!appsettings.example.json
+
+# =================== Base de données / exports ===================
+*.backup
+*.dump
+*.bak
+Exports/
+Tickets/
+
+# ============================ Système ============================
+Thumbs.db
+Desktop.ini
+.DS_Store
