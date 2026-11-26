@@ -51,8 +51,8 @@ CREATE TABLE client (
     nom              VARCHAR(100) NOT NULL,
     prenom           VARCHAR(100),
     telephone        VARCHAR(20)  NOT NULL UNIQUE,                          -- RG1
-    email            VARCHAR(150) UNIQUE                                    -- RG1 : facultatif
-        CONSTRAINT ck_client_email CHECK (email IS NULL OR email ~* '^[^@\s]+@[^@\s]+\.[^@\s]+$'),
+    email            VARCHAR(150) NOT NULL UNIQUE                           -- RG1 : obligatoire
+        CONSTRAINT ck_client_email CHECK (email ~* '^[^@\s]+@[^@\s]+\.[^@\s]+$'),
     adresse          VARCHAR(200),
     date_inscription TIMESTAMP(0) NOT NULL DEFAULT LOCALTIMESTAMP(0)
 );
@@ -156,7 +156,7 @@ CREATE TABLE notification (
     pour_role       VARCHAR(20)  NOT NULL
         CONSTRAINT ck_notification_role CHECK (pour_role IN ('Administrateur', 'Caissier', 'Laveur', 'Repasseur')),
     type            VARCHAR(30)  NOT NULL
-        CONSTRAINT ck_notification_type CHECK (type IN ('NouvelleCommande', 'ClientSansEmail', 'EmailEchec', 'AVendre')),
+        CONSTRAINT ck_notification_type CHECK (type IN ('NouvelleCommande', 'EmailEchec', 'AVendre')),
     date_creation   TIMESTAMP(0) NOT NULL DEFAULT LOCALTIMESTAMP(0),
     traitee         BOOLEAN      NOT NULL DEFAULT FALSE,
     date_traitement TIMESTAMP(0),
@@ -355,13 +355,11 @@ BEFORE INSERT OR UPDATE ON commande
 FOR EACH ROW EXECUTE FUNCTION trg_commande_avant();
 
 
-/* Commande APRÈS enregistrement : historique (RG9) et notifications par rôle (RG7, RG13) */
+/* Commande APRÈS enregistrement : historique (RG9) et notifications par rôle (RG7) */
 CREATE FUNCTION trg_commande_apres()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
-DECLARE
-    v_email VARCHAR(150);
 BEGIN
     IF TG_OP = 'UPDATE' AND NEW.statut = OLD.statut THEN
         RETURN NULL;
@@ -386,15 +384,6 @@ BEGIN
     ELSIF NEW.statut = 'EnRepassage' THEN
         INSERT INTO notification (id_commande, pour_role, type)
         VALUES (NEW.id_commande, 'Repasseur', 'NouvelleCommande') ON CONFLICT DO NOTHING;
-    END IF;
-
-    -- RG13 : commande prête et client sans email -> l'administrateur doit l'appeler
-    IF NEW.statut = 'Prete' THEN
-        SELECT email INTO v_email FROM client WHERE id_client = NEW.id_client;
-        IF v_email IS NULL THEN
-            INSERT INTO notification (id_commande, pour_role, type)
-            VALUES (NEW.id_commande, 'Administrateur', 'ClientSansEmail') ON CONFLICT DO NOTHING;
-        END IF;
     END IF;
 
     -- Commande terminée : plus rien à traiter
