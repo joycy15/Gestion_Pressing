@@ -14,6 +14,10 @@
 //    AVendre          -> pour l'Administrateur : le délai de grâce après
 //                        l'avertissement est dépassé, la commande peut
 //                        être vendue (créée par fn_generer_notifications_a_vendre).
+//    ALivrer          -> pour le Livreur, DÈS LE DÉPÔT quand le client a
+//                        choisi la livraison : une livraison est à prévoir ;
+//    PreteALivrer     -> pour le Livreur : la commande est prête, il peut
+//                        partir (aussi après un échec de livraison).
 //
 //  Le C# fait seulement deux choses :
 //    1. LIRE les notifications non traitées du rôle de l'utilisateur connecté ;
@@ -32,7 +36,7 @@
 //      date_traitement             ->   DateTraitement   (vide si non traitée)
 //
 //  Utilisé par : la zone de notifications de la fenêtre principale
-//  (laveur, repasseur, administrateur).
+//  (laveur, repasseur, livreur, administrateur).
 // =====================================================================
 
 namespace Pressing.Models;
@@ -48,7 +52,7 @@ public class Notification
     /// <summary>La commande concernée.</summary>
     public int IdCommande { get; set; }
 
-    /// <summary>Le rôle qui doit voir la notification (Laveur, Repasseur, Administrateur...).</summary>
+    /// <summary>Le rôle qui doit voir la notification (Laveur, Repasseur, Livreur, Administrateur...).</summary>
     public RoleUtilisateur PourRole { get; set; }
 
     /// <summary>Nouvelle commande, email non envoyé, ou commande à vendre.</summary>

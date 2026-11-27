@@ -32,7 +32,8 @@ public enum RoleUtilisateur
     Administrateur,   // le gérant : accès à tout
     Caissier,         // comptoir : clients, dépôts, paiements, retraits
     Laveur,           // atelier : commence et termine le lavage
-    Repasseur         // atelier : termine le repassage (commande « Prête »)
+    Repasseur,        // atelier : termine le repassage (commande « Prête »)
+    Livreur           // livraison : apporte les commandes chez les clients qui l'ont demandé
 }
 
 
@@ -40,6 +41,8 @@ public enum RoleUtilisateur
 //  Statut d'une commande (table commande, colonne statut)
 //  Ordre normal : Deposee -> EnLavage -> EnRepassage -> Prete -> Retiree
 //  « Repassage seul » commence directement à EnRepassage.
+//  Avec livraison : ... -> Prete -> EnLivraison -> Livree
+//                   (échec de livraison : EnLivraison -> Prete)
 // ---------------------------------------------------------------------
 public enum StatutCommande
 {
@@ -48,6 +51,8 @@ public enum StatutCommande
     EnRepassage,   // lavée (ou repassage seul), attend le repasseur
     Prete,         // repassée : le client peut venir (email envoyé)
     Avertie,       // prête depuis 30 jours sans retrait : email d'avertissement envoyé
+    EnLivraison,   // le livreur est parti avec la commande
+    Livree,        // le livreur a remis la commande au client (tout est payé)
     Retiree,       // le client a récupéré ses vêtements (tout est payé)
     Vendue,        // non retirée après le délai de grâce : vendue par l'administrateur
     Annulee        // annulée par l'administrateur
@@ -81,12 +86,25 @@ public enum ModePaiement
 
 // ---------------------------------------------------------------------
 //  Moment du paiement (table paiement, colonne moment)
-//  Un client peut payer en une fois ou en deux fois.
+//  Un client peut payer en une fois ou en deux fois (au dépôt, puis au
+//  retrait OU au livreur).
 // ---------------------------------------------------------------------
 public enum MomentPaiement
 {
-    Depot,     // payé en déposant les vêtements
-    Retrait    // payé en venant les récupérer
+    Depot,      // payé en déposant les vêtements
+    Retrait,    // payé en venant les récupérer
+    Livraison   // payé au livreur, à la livraison
+}
+
+
+// ---------------------------------------------------------------------
+//  Mode de récupération (table commande, colonne mode_recuperation)
+//  Choisi par le client AU DÉPÔT.
+// ---------------------------------------------------------------------
+public enum ModeRecuperation
+{
+    Retrait,    // le client vient récupérer lui-même au pressing
+    Livraison   // le livreur apporte la commande (frais de livraison ajoutés)
 }
 
 
@@ -129,7 +147,9 @@ public enum TypeNotification
 {
     NouvelleCommande,   // pour le laveur ou le repasseur : une commande arrive dans sa file
     EmailEchec,         // pour l'administrateur : un email n'est pas parti, à renvoyer
-    AVendre             // pour l'administrateur : le délai de grâce est dépassé
+    AVendre,            // pour l'administrateur : le délai de grâce est dépassé
+    ALivrer,            // pour le livreur : dès le dépôt, une livraison est à prévoir
+    PreteALivrer        // pour le livreur : la commande est prête, il peut partir
 }
 
 
@@ -157,6 +177,7 @@ public static class Libelles
         RoleUtilisateur.Caissier => "Caissier",
         RoleUtilisateur.Laveur => "Laveur",
         RoleUtilisateur.Repasseur => "Repasseur",
+        RoleUtilisateur.Livreur => "Livreur",
         _ => r.ToString()
     };
 
@@ -168,6 +189,8 @@ public static class Libelles
         StatutCommande.EnRepassage => "En repassage",
         StatutCommande.Prete => "Prête",
         StatutCommande.Avertie => "Avertie",
+        StatutCommande.EnLivraison => "En livraison",
+        StatutCommande.Livree => "Livrée",
         StatutCommande.Retiree => "Retirée",
         StatutCommande.Vendue => "Vendue",
         StatutCommande.Annulee => "Annulée",
@@ -197,6 +220,15 @@ public static class Libelles
     {
         MomentPaiement.Depot => "Au dépôt",
         MomentPaiement.Retrait => "Au retrait",
+        MomentPaiement.Livraison => "À la livraison",
+        _ => m.ToString()
+    };
+
+    /// <summary>Mode de récupération en français (dépôt, ticket, file du livreur).</summary>
+    public static string De(ModeRecuperation m) => m switch
+    {
+        ModeRecuperation.Retrait => "Retrait au pressing",
+        ModeRecuperation.Livraison => "Livraison à domicile",
         _ => m.ToString()
     };
 
@@ -230,6 +262,8 @@ public static class Libelles
         TypeNotification.NouvelleCommande => "Nouvelle commande",
         TypeNotification.EmailEchec => "Email non envoyé",
         TypeNotification.AVendre => "Commande à vendre",
+        TypeNotification.ALivrer => "Livraison à prévoir",
+        TypeNotification.PreteALivrer => "Prête à livrer",
         _ => t.ToString()
     };
 

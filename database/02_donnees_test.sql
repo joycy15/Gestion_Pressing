@@ -7,6 +7,7 @@
      caissier1   / Caisse@2026   Caissier
      laveur1     / Laveur@2026   Laveur
      repasseur1  / Repasse@2026  Repasseur
+     livreur1    / Livre@2026    Livreur
 
    Prix : grille officielle du pressing (lavage + repassage) et règles de calcul
    pour les autres services ; l'administrateur peut tout ajuster.
@@ -23,7 +24,8 @@ INSERT INTO parametre (cle, valeur, description) VALUES
 ('HorairesPressing',        'Lundi - samedi, 8 h - 19 h', 'Horaires rappelés dans l''email « commande prête »'),
 ('SmtpServeur',             'smtp.gmail.com', 'Serveur d''envoi des emails'),
 ('SmtpPort',                '587', 'Port SMTP (587 = STARTTLS)'),
-('EmailExpediteur',         'pressigest@example.com', 'Adresse d''envoi ; le mot de passe est dans appsettings.json');
+('EmailExpediteur',         'pressigest@example.com', 'Adresse d''envoi ; le mot de passe est dans appsettings.json'),
+('FraisLivraison',          '1000', 'Frais de livraison en FCFA, ajoutés au total si le client choisit la livraison (RG21)');
 
 /* ---------------------------- Utilisateurs ---------------------------- */
 /* Hash = PBKDF2-SHA256, 100 000 itérations, 32 octets, sel de 16 octets (Base64) */
@@ -35,7 +37,9 @@ INSERT INTO utilisateur (nom, login, mot_de_passe_hash, sel, role) VALUES
 ('Laveur 1', 'laveur1',
  'lT+yDhEz/MmHDkGeUeyt5BPwIkWtaCuv5tGUUueTkfs=', 'CBkF4PJ+wEZpAqmjUUy+UQ==', 'Laveur'),
 ('Repasseur 1', 'repasseur1',
- 'bopNNcwL37qKJ0VQxApdOKadWmQ1/xyUnrrnhcJpFpc=', 'NbOAqQC6ZALeXSj52FD7IQ==', 'Repasseur');
+ 'bopNNcwL37qKJ0VQxApdOKadWmQ1/xyUnrrnhcJpFpc=', 'NbOAqQC6ZALeXSj52FD7IQ==', 'Repasseur'),
+('Livreur 1', 'livreur1',
+ 'PxOXr9xsO1eCxmaoHlesHkEdHCWG0f5RQpxVicg3oQw=', '7CdijbFmqLt0IAwJAh+UVQ==', 'Livreur');
 
 /* ------------------------------ Services ------------------------------ */
 INSERT INTO service (nom, circuit, delai_jours, prioritaire) VALUES
@@ -150,6 +154,7 @@ DECLARE
     v_caiss INT := (SELECT id_utilisateur FROM utilisateur WHERE login = 'caissier1');
     v_lav   INT := (SELECT id_utilisateur FROM utilisateur WHERE login = 'laveur1');
     v_rep   INT := (SELECT id_utilisateur FROM utilisateur WHERE login = 'repasseur1');
+    v_liv   INT := (SELECT id_utilisateur FROM utilisateur WHERE login = 'livreur1');
 
     s_std   INT := (SELECT id_service FROM service WHERE nom = 'Lavage + repassage');
     s_exp   INT := (SELECT id_service FROM service WHERE nom = 'Lavage express');
@@ -285,6 +290,53 @@ BEGIN
     UPDATE commande SET statut = 'Prete' WHERE id_commande = v_cmd;
     INSERT INTO email_envoye (id_commande, type, destinataire, resultat, erreur)
     VALUES (v_cmd, 'Pret', 'alice.mbarga@example.com', 'Echec', 'Impossible de joindre le serveur SMTP (pas de connexion Internet)');
+
+    /* ------------------------------ LIVRAISONS ------------------------------ */
+
+    /* 9. À LIVRER, déposée aujourd'hui, adresse du client reprise automatiquement,
+          frais 1 000 ajoutés, rien payé -> notification « À livrer » au livreur dès le dépôt */
+    PERFORM set_config('app.id_utilisateur', v_caiss::TEXT, true);
+    INSERT INTO commande (id_client, id_service, id_utilisateur, mode_recuperation)
+    VALUES (c5, s_std, v_caiss, 'Livraison')
+    RETURNING id_commande INTO v_cmd;
+    INSERT INTO ligne_commande (id_commande, id_type_vetement, quantite, prix_unitaire) VALUES
+    (v_cmd, t_chem, 2, (SELECT prix FROM tarif WHERE id_type_vetement = t_chem AND id_service = s_std)),
+    (v_cmd, t_pant, 1, (SELECT prix FROM tarif WHERE id_type_vetement = t_pant AND id_service = s_std));
+
+    /* 10. À LIVRER, express, prête : avance au dépôt, le reste sera payé au livreur */
+    INSERT INTO commande (id_client, id_service, id_utilisateur, date_depot, mode_recuperation, adresse_livraison)
+    VALUES (c4, s_exp, v_caiss, LOCALTIMESTAMP(0) - INTERVAL '1 day', 'Livraison', 'Bafoussam, Banengo, immeuble bleu 2e étage')
+    RETURNING id_commande INTO v_cmd;
+    INSERT INTO ligne_commande (id_commande, id_type_vetement, quantite, prix_unitaire) VALUES
+    (v_cmd, t_robe, 1, (SELECT prix FROM tarif WHERE id_type_vetement = t_robe AND id_service = s_exp));
+    INSERT INTO paiement (id_commande, id_utilisateur, montant, mode_paiement, moment, date_paiement)
+    VALUES (v_cmd, v_caiss, 1000, 'Especes', 'Depot', LOCALTIMESTAMP(0) - INTERVAL '1 day');
+    PERFORM set_config('app.id_utilisateur', v_lav::TEXT, true);
+    UPDATE commande SET statut = 'EnLavage'    WHERE id_commande = v_cmd;
+    UPDATE commande SET statut = 'EnRepassage' WHERE id_commande = v_cmd;
+    PERFORM set_config('app.id_utilisateur', v_rep::TEXT, true);
+    UPDATE commande SET statut = 'Prete' WHERE id_commande = v_cmd;
+    INSERT INTO email_envoye (id_commande, type, destinataire, resultat)
+    VALUES (v_cmd, 'Pret', 'bernard.tchoua@example.com', 'Envoye');
+
+    /* 11. LIVRÉE hier : le client a payé le reste au livreur (MTN Mobile Money) */
+    PERFORM set_config('app.id_utilisateur', v_caiss::TEXT, true);
+    INSERT INTO commande (id_client, id_service, id_utilisateur, date_depot, mode_recuperation)
+    VALUES (c1, s_rep, v_caiss, LOCALTIMESTAMP(0) - INTERVAL '3 days', 'Livraison')
+    RETURNING id_commande INTO v_cmd;
+    INSERT INTO ligne_commande (id_commande, id_type_vetement, quantite, prix_unitaire) VALUES
+    (v_cmd, t_chem, 5, (SELECT prix FROM tarif WHERE id_type_vetement = t_chem AND id_service = s_rep));
+    INSERT INTO paiement (id_commande, id_utilisateur, montant, mode_paiement, moment, date_paiement)
+    VALUES (v_cmd, v_caiss, 1000, 'Especes', 'Depot', LOCALTIMESTAMP(0) - INTERVAL '3 days');
+    PERFORM set_config('app.id_utilisateur', v_rep::TEXT, true);
+    UPDATE commande SET statut = 'Prete', date_prete = LOCALTIMESTAMP(0) - INTERVAL '2 days' WHERE id_commande = v_cmd;
+    INSERT INTO email_envoye (id_commande, type, destinataire, date_envoi, resultat)
+    VALUES (v_cmd, 'Pret', 'marie.ngono@example.com', LOCALTIMESTAMP(0) - INTERVAL '2 days', 'Envoye');
+    PERFORM set_config('app.id_utilisateur', v_liv::TEXT, true);
+    UPDATE commande SET statut = 'EnLivraison' WHERE id_commande = v_cmd;
+    INSERT INTO paiement (id_commande, id_utilisateur, montant, mode_paiement, moment, date_paiement)
+    VALUES (v_cmd, v_liv, 1000, 'MobileMoney', 'Livraison', LOCALTIMESTAMP(0) - INTERVAL '1 day');
+    UPDATE commande SET statut = 'Livree', date_livraison = LOCALTIMESTAMP(0) - INTERVAL '1 day' WHERE id_commande = v_cmd;
 END;
 $$;
 
@@ -292,7 +344,7 @@ $$;
 SELECT fn_generer_notifications_a_vendre() AS notifications_a_vendre;
 
 /* ----------------------------- Vérification ---------------------------- */
-SELECT numero_ticket, nom_client, service, statut, statut_paiement,
-       montant_total, montant_paye, reste_a_payer
+SELECT numero_ticket, nom_client, service, mode_recuperation AS recuperation, statut, statut_paiement,
+       frais_livraison AS frais, montant_total, montant_paye, reste_a_payer
 FROM vue_commande_solde
 ORDER BY id_commande;

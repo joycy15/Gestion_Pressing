@@ -72,6 +72,13 @@ public class Utilisateur
     public bool PeutTravaillerALAtelier =>
         Role is RoleUtilisateur.Laveur or RoleUtilisateur.Repasseur or RoleUtilisateur.Administrateur;
 
+    /// <summary>
+    /// true si l'employé peut voir l'écran Livraisons (livreur, ou administrateur
+    /// qui peut tout faire).
+    /// </summary>
+    public bool PeutLivrer =>
+        Role is RoleUtilisateur.Livreur or RoleUtilisateur.Administrateur;
+
 
     // ------------------------------- Affichage -------------------------------
 

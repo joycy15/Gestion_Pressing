@@ -1,6 +1,6 @@
 /* =====================================================================
    PressiGest - Script 1 : création de la base (PostgreSQL 14+)
-   Cahier des charges v2 : 12 tables, 4 rôles, 4 services, emails, ventes.
+   Cahier des charges v2 : 12 tables, 5 rôles, 4 services, emails, ventes, livraison.
 
    AVANT de lancer ce script :
      1. pgAdmin : clic droit sur Databases > Create > Database > nom : pressing_db
@@ -12,7 +12,8 @@
 
 /* ---------------------- Suppression de l'existant --------------------- */
 DROP VIEW IF EXISTS vue_encaissements, vue_commandes_a_vendre, vue_commandes_a_avertir,
-                    vue_file_repassage, vue_file_lavage, vue_tarifs, vue_commande_solde CASCADE;
+                    vue_file_livraison, vue_file_repassage, vue_file_lavage, vue_tarifs,
+                    vue_commande_solde CASCADE;
 DROP TABLE IF EXISTS notification, email_envoye, historique_statut, paiement, ligne_commande,
                      commande, tarif, type_vetement, service, client, utilisateur, parametre CASCADE;
 DROP FUNCTION IF EXISTS fn_utilisateur_courant() CASCADE;
@@ -21,6 +22,7 @@ DROP FUNCTION IF EXISTS fn_generer_notifications_a_vendre() CASCADE;
 DROP FUNCTION IF EXISTS trg_ligne_commande_recalcul() CASCADE;
 DROP FUNCTION IF EXISTS trg_paiement_controle() CASCADE;
 DROP FUNCTION IF EXISTS trg_commande_avant() CASCADE;
+DROP FUNCTION IF EXISTS fn_preparer_livraison(commande) CASCADE;
 DROP FUNCTION IF EXISTS trg_commande_apres() CASCADE;
 DROP FUNCTION IF EXISTS trg_email_echec() CASCADE;
 
@@ -41,7 +43,7 @@ CREATE TABLE utilisateur (
     mot_de_passe_hash VARCHAR(100) NOT NULL,          -- PBKDF2-SHA256, Base64
     sel               VARCHAR(50)  NOT NULL,          -- sel aléatoire, Base64
     role              VARCHAR(20)  NOT NULL
-        CONSTRAINT ck_utilisateur_role CHECK (role IN ('Administrateur', 'Caissier', 'Laveur', 'Repasseur')),
+        CONSTRAINT ck_utilisateur_role CHECK (role IN ('Administrateur', 'Caissier', 'Laveur', 'Repasseur', 'Livreur')),
     actif             BOOLEAN      NOT NULL DEFAULT TRUE,
     date_creation     TIMESTAMP(0) NOT NULL DEFAULT LOCALTIMESTAMP(0)
 );
@@ -88,16 +90,24 @@ CREATE TABLE commande (
     id_client           INT          NOT NULL REFERENCES client(id_client),
     id_service          INT          NOT NULL REFERENCES service(id_service),
     id_utilisateur      INT          NOT NULL REFERENCES utilisateur(id_utilisateur),  -- caissier
+    -- RG20 : choisi au dépôt. 'Retrait' = le client vient ; 'Livraison' = le livreur apporte
+    mode_recuperation   VARCHAR(10)  NOT NULL DEFAULT 'Retrait'
+        CONSTRAINT ck_commande_mode_recuperation CHECK (mode_recuperation IN ('Retrait', 'Livraison')),
+    adresse_livraison   VARCHAR(200),                     -- obligatoire si Livraison (sinon NULL)
+    frais_livraison     INT          NOT NULL             -- rempli par le déclencheur (paramètre FraisLivraison)
+        CHECK (frais_livraison >= 0),
     date_depot          TIMESTAMP(0) NOT NULL DEFAULT LOCALTIMESTAMP(0),
     date_retrait_prevue DATE         NOT NULL,            -- calculée si absente (délai du service)
     date_prete          TIMESTAMP(0),
     date_avertissement  TIMESTAMP(0),
     date_retrait        TIMESTAMP(0),
     date_vente          TIMESTAMP(0),
+    date_livraison      TIMESTAMP(0),
     prix_vente          INT CHECK (prix_vente IS NULL OR prix_vente >= 0),
     statut              VARCHAR(20)  NOT NULL DEFAULT 'Deposee'
         CONSTRAINT ck_commande_statut CHECK (statut IN
-            ('Deposee', 'EnLavage', 'EnRepassage', 'Prete', 'Avertie', 'Retiree', 'Vendue', 'Annulee')),
+            ('Deposee', 'EnLavage', 'EnRepassage', 'Prete', 'Avertie', 'EnLivraison', 'Livree',
+             'Retiree', 'Vendue', 'Annulee')),
     -- Calculés automatiquement : ne jamais les saisir à la main
     montant_total       INT          NOT NULL DEFAULT 0 CHECK (montant_total >= 0),
     statut_paiement     VARCHAR(20)  NOT NULL DEFAULT 'NonPaye'
@@ -121,7 +131,7 @@ CREATE TABLE paiement (
     mode_paiement  VARCHAR(20)  NOT NULL                                                   -- RG10
         CONSTRAINT ck_paiement_mode CHECK (mode_paiement IN ('Especes', 'OrangeMoney', 'MobileMoney')),
     moment         VARCHAR(10)  NOT NULL
-        CONSTRAINT ck_paiement_moment CHECK (moment IN ('Depot', 'Retrait')),
+        CONSTRAINT ck_paiement_moment CHECK (moment IN ('Depot', 'Retrait', 'Livraison')),
     date_paiement  TIMESTAMP(0) NOT NULL DEFAULT LOCALTIMESTAMP(0)
 );
 
@@ -154,9 +164,10 @@ CREATE TABLE notification (
     id_notification INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     id_commande     INT          NOT NULL REFERENCES commande(id_commande) ON DELETE CASCADE,
     pour_role       VARCHAR(20)  NOT NULL
-        CONSTRAINT ck_notification_role CHECK (pour_role IN ('Administrateur', 'Caissier', 'Laveur', 'Repasseur')),
+        CONSTRAINT ck_notification_role CHECK (pour_role IN ('Administrateur', 'Caissier', 'Laveur', 'Repasseur', 'Livreur')),
     type            VARCHAR(30)  NOT NULL
-        CONSTRAINT ck_notification_type CHECK (type IN ('NouvelleCommande', 'EmailEchec', 'AVendre')),
+        CONSTRAINT ck_notification_type CHECK (type IN
+            ('NouvelleCommande', 'EmailEchec', 'AVendre', 'ALivrer', 'PreteALivrer')),
     date_creation   TIMESTAMP(0) NOT NULL DEFAULT LOCALTIMESTAMP(0),
     traitee         BOOLEAN      NOT NULL DEFAULT FALSE,
     date_traitement TIMESTAMP(0),
@@ -245,9 +256,11 @@ BEGIN
             CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN OLD.id_commande END
         ]) AS x WHERE x IS NOT NULL
     LOOP
+        -- Total = vêtements + frais de livraison (0 si le client récupère lui-même)
         UPDATE commande
         SET montant_total = COALESCE(
                 (SELECT SUM(quantite * prix_unitaire) FROM ligne_commande WHERE id_commande = v_id), 0)
+                + frais_livraison
         WHERE id_commande = v_id;
 
         PERFORM fn_recalculer_statut_paiement(v_id);
@@ -282,8 +295,41 @@ AFTER INSERT OR UPDATE OR DELETE ON paiement
 FOR EACH ROW EXECUTE FUNCTION trg_paiement_controle();
 
 
+/* Livraison : complète l'adresse et les frais d'une commande (RG20, RG21).
+   Retrait   -> frais 0, pas d'adresse.
+   Livraison -> adresse du client si rien n'est saisi ; frais = paramètre FraisLivraison si rien n'est saisi. */
+CREATE FUNCTION fn_preparer_livraison(p_cmd commande)
+RETURNS commande
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF p_cmd.mode_recuperation = 'Retrait' THEN
+        p_cmd.adresse_livraison := NULL;
+        p_cmd.frais_livraison   := 0;
+        RETURN p_cmd;
+    END IF;
+
+    IF p_cmd.adresse_livraison IS NULL OR btrim(p_cmd.adresse_livraison) = '' THEN
+        SELECT adresse INTO p_cmd.adresse_livraison FROM client WHERE id_client = p_cmd.id_client;
+    END IF;
+    IF p_cmd.adresse_livraison IS NULL OR btrim(p_cmd.adresse_livraison) = '' THEN
+        RAISE EXCEPTION 'Adresse de livraison obligatoire : saisissez-la ou complétez l''adresse du client.'
+            USING ERRCODE = 'PR007';
+    END IF;
+    p_cmd.adresse_livraison := btrim(p_cmd.adresse_livraison);
+
+    IF p_cmd.frais_livraison IS NULL THEN
+        SELECT valeur::INT INTO p_cmd.frais_livraison FROM parametre WHERE cle = 'FraisLivraison';
+        p_cmd.frais_livraison := COALESCE(p_cmd.frais_livraison, 0);
+    END IF;
+    RETURN p_cmd;
+END;
+$$;
+
+
 /* Commande AVANT enregistrement :
-   numéro de ticket (RG3), circuit selon le service (RG5), règles de statut (RG5, RG12, RG17), dates */
+   numéro de ticket (RG3), circuit selon le service (RG5), livraison (RG20-RG22),
+   règles de statut (RG5, RG12, RG17), dates */
 CREATE FUNCTION trg_commande_avant()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -292,6 +338,7 @@ DECLARE
     v_circuit VARCHAR(30);
     v_delai   INT;
     v_ok      BOOLEAN;
+    v_paye    INT;
 BEGIN
     IF TG_OP = 'INSERT' THEN
         SELECT circuit, delai_jours INTO v_circuit, v_delai FROM service WHERE id_service = NEW.id_service;
@@ -313,6 +360,11 @@ BEGIN
             NEW.date_retrait_prevue := NEW.date_depot::DATE + v_delai;
         END IF;
 
+        -- RG20 / RG21 : adresse et frais de livraison ; le total commence aux frais
+        NEW := fn_preparer_livraison(NEW);
+        NEW.montant_total   := NEW.frais_livraison;
+        NEW.statut_paiement := 'NonPaye';
+
         RETURN NEW;
     END IF;
 
@@ -323,20 +375,62 @@ BEGIN
         RAISE EXCEPTION 'Le service ne peut plus être changé une fois le traitement commencé.' USING ERRCODE = 'PR006';
     END IF;
 
+    -- RG22 : changement du mode de récupération, de l'adresse ou des frais
+    IF (NEW.mode_recuperation, NEW.adresse_livraison, NEW.frais_livraison)
+       IS DISTINCT FROM (OLD.mode_recuperation, OLD.adresse_livraison, OLD.frais_livraison) THEN
+
+        IF OLD.statut IN ('EnLivraison', 'Livree', 'Retiree', 'Vendue', 'Annulee') THEN
+            RAISE EXCEPTION 'La livraison ne peut plus être modifiée pour une commande « % ».', OLD.statut
+                USING ERRCODE = 'PR009';
+        END IF;
+
+        -- Passage de Retrait à Livraison sans frais saisis : on prend le paramètre
+        IF NEW.mode_recuperation <> OLD.mode_recuperation AND NEW.frais_livraison = OLD.frais_livraison THEN
+            NEW.frais_livraison := NULL;
+        END IF;
+        NEW := fn_preparer_livraison(NEW);
+
+        -- Nouveau total = vêtements + frais ; contrôle RG10 et statut de paiement (RG11)
+        NEW.montant_total := COALESCE((SELECT SUM(quantite * prix_unitaire) FROM ligne_commande
+                                       WHERE id_commande = NEW.id_commande), 0) + NEW.frais_livraison;
+        SELECT COALESCE(SUM(montant), 0) INTO v_paye FROM paiement WHERE id_commande = NEW.id_commande;
+        IF v_paye > NEW.montant_total THEN
+            RAISE EXCEPTION 'Le total des paiements (% FCFA) dépasserait le nouveau montant de la commande (% FCFA).',
+                v_paye, NEW.montant_total USING ERRCODE = 'PR001';
+        END IF;
+        NEW.statut_paiement := CASE
+            WHEN v_paye = 0                  THEN 'NonPaye'
+            WHEN v_paye >= NEW.montant_total THEN 'Paye'
+            ELSE 'PartiellementPaye'
+        END;
+    END IF;
+
     IF NEW.statut <> OLD.statut THEN
-        -- RG5 / RG17 : seuls ces passages sont autorisés
+        -- RG5 / RG17 / RG23 : seuls ces passages sont autorisés
         v_ok := (OLD.statut, NEW.statut) IN (
                     ('Deposee', 'EnLavage'), ('EnLavage', 'EnRepassage'), ('EnRepassage', 'Prete'),
-                    ('Prete', 'Avertie'), ('Prete', 'Retiree'), ('Avertie', 'Retiree'), ('Avertie', 'Vendue'))
+                    ('Prete', 'Avertie'), ('Prete', 'Retiree'), ('Avertie', 'Retiree'), ('Avertie', 'Vendue'),
+                    ('Prete', 'EnLivraison'), ('Avertie', 'EnLivraison'),      -- le livreur part
+                    ('EnLivraison', 'Livree'),                                 -- remise au client
+                    ('EnLivraison', 'Prete'))                                  -- échec : retour au pressing
              OR (NEW.statut = 'Annulee' AND OLD.statut IN ('Deposee', 'EnLavage', 'EnRepassage', 'Prete', 'Avertie'));
 
         IF NOT v_ok THEN
             RAISE EXCEPTION 'Passage du statut « % » à « % » interdit.', OLD.statut, NEW.statut USING ERRCODE = 'PR005';
         END IF;
 
-        -- RG12 : retrait seulement si tout est payé
+        -- RG23 : seule une commande « à livrer » part en livraison
+        IF NEW.statut = 'EnLivraison' AND NEW.mode_recuperation <> 'Livraison' THEN
+            RAISE EXCEPTION 'Cette commande est à récupérer au pressing : elle ne peut pas partir en livraison.'
+                USING ERRCODE = 'PR008';
+        END IF;
+
+        -- RG12 : retrait / livraison seulement si tout est payé
         IF NEW.statut = 'Retiree' AND NEW.statut_paiement <> 'Paye' THEN
             RAISE EXCEPTION 'Retrait impossible : il reste un montant à payer.' USING ERRCODE = 'PR003';
+        END IF;
+        IF NEW.statut = 'Livree' AND NEW.statut_paiement <> 'Paye' THEN
+            RAISE EXCEPTION 'Livraison impossible à valider : il reste un montant à payer.' USING ERRCODE = 'PR003';
         END IF;
 
         -- Dates remplies automatiquement
@@ -344,6 +438,7 @@ BEGIN
         IF NEW.statut = 'Avertie' AND NEW.date_avertissement IS NULL THEN NEW.date_avertissement := LOCALTIMESTAMP(0); END IF;
         IF NEW.statut = 'Retiree' AND NEW.date_retrait       IS NULL THEN NEW.date_retrait       := LOCALTIMESTAMP(0); END IF;
         IF NEW.statut = 'Vendue'  AND NEW.date_vente         IS NULL THEN NEW.date_vente         := LOCALTIMESTAMP(0); END IF;
+        IF NEW.statut = 'Livree'  AND NEW.date_livraison     IS NULL THEN NEW.date_livraison     := LOCALTIMESTAMP(0); END IF;
     END IF;
 
     RETURN NEW;
@@ -355,39 +450,76 @@ BEFORE INSERT OR UPDATE ON commande
 FOR EACH ROW EXECUTE FUNCTION trg_commande_avant();
 
 
-/* Commande APRÈS enregistrement : historique (RG9) et notifications par rôle (RG7) */
+/* Commande APRÈS enregistrement : historique (RG9) et notifications par rôle (RG7, RG24) */
 CREATE FUNCTION trg_commande_apres()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
+DECLARE
+    v_statut_change BOOLEAN := (TG_OP = 'INSERT' OR NEW.statut <> OLD.statut);
+    v_mode_change   BOOLEAN := (TG_OP = 'UPDATE' AND NEW.mode_recuperation <> OLD.mode_recuperation);
 BEGIN
-    IF TG_OP = 'UPDATE' AND NEW.statut = OLD.statut THEN
+    IF NOT v_statut_change AND NOT v_mode_change THEN
         RETURN NULL;
     END IF;
 
-    -- RG9 : historique
-    INSERT INTO historique_statut (id_commande, ancien_statut, nouveau_statut, id_utilisateur)
-    VALUES (NEW.id_commande,
-            CASE WHEN TG_OP = 'UPDATE' THEN OLD.statut END,
-            NEW.statut,
-            COALESCE(fn_utilisateur_courant(), CASE WHEN TG_OP = 'INSERT' THEN NEW.id_utilisateur END));
+    IF v_statut_change THEN
+        -- RG9 : historique
+        INSERT INTO historique_statut (id_commande, ancien_statut, nouveau_statut, id_utilisateur)
+        VALUES (NEW.id_commande,
+                CASE WHEN TG_OP = 'UPDATE' THEN OLD.statut END,
+                NEW.statut,
+                COALESCE(fn_utilisateur_courant(), CASE WHEN TG_OP = 'INSERT' THEN NEW.id_utilisateur END));
 
-    -- La commande quitte une file : la notification « nouvelle commande » est traitée
-    UPDATE notification
-    SET traitee = TRUE, date_traitement = LOCALTIMESTAMP(0)
-    WHERE id_commande = NEW.id_commande AND type = 'NouvelleCommande' AND traitee = FALSE;
+        -- La commande quitte une file : la notification « nouvelle commande » est traitée
+        UPDATE notification
+        SET traitee = TRUE, date_traitement = LOCALTIMESTAMP(0)
+        WHERE id_commande = NEW.id_commande AND type = 'NouvelleCommande' AND traitee = FALSE;
 
-    -- RG7 : la commande arrive dans la file du laveur ou du repasseur
-    IF NEW.statut = 'Deposee' THEN
-        INSERT INTO notification (id_commande, pour_role, type)
-        VALUES (NEW.id_commande, 'Laveur', 'NouvelleCommande') ON CONFLICT DO NOTHING;
-    ELSIF NEW.statut = 'EnRepassage' THEN
-        INSERT INTO notification (id_commande, pour_role, type)
-        VALUES (NEW.id_commande, 'Repasseur', 'NouvelleCommande') ON CONFLICT DO NOTHING;
+        -- RG7 : la commande arrive dans la file du laveur ou du repasseur
+        IF NEW.statut = 'Deposee' THEN
+            INSERT INTO notification (id_commande, pour_role, type)
+            VALUES (NEW.id_commande, 'Laveur', 'NouvelleCommande') ON CONFLICT DO NOTHING;
+        ELSIF NEW.statut = 'EnRepassage' THEN
+            INSERT INTO notification (id_commande, pour_role, type)
+            VALUES (NEW.id_commande, 'Repasseur', 'NouvelleCommande') ON CONFLICT DO NOTHING;
+        END IF;
+    END IF;
+
+    -- RG24 : notifications du livreur
+    IF NEW.mode_recuperation = 'Livraison' THEN
+        -- Dès le dépôt (ou dès que le client choisit la livraison) : livraison à prévoir
+        IF TG_OP = 'INSERT' OR v_mode_change THEN
+            INSERT INTO notification (id_commande, pour_role, type)
+            VALUES (NEW.id_commande, 'Livreur', 'ALivrer')
+            ON CONFLICT (id_commande, type, pour_role)
+            DO UPDATE SET traitee = FALSE, date_traitement = NULL, date_creation = LOCALTIMESTAMP(0);
+        END IF;
+
+        -- Commande prête (ou revenue après un échec) : le livreur peut partir
+        IF NEW.statut IN ('Prete', 'Avertie') AND (v_mode_change OR (v_statut_change AND NEW.statut = 'Prete')) THEN
+            UPDATE notification SET traitee = TRUE, date_traitement = LOCALTIMESTAMP(0)
+            WHERE id_commande = NEW.id_commande AND type = 'ALivrer' AND traitee = FALSE;
+
+            INSERT INTO notification (id_commande, pour_role, type)
+            VALUES (NEW.id_commande, 'Livreur', 'PreteALivrer')
+            ON CONFLICT (id_commande, type, pour_role)
+            DO UPDATE SET traitee = FALSE, date_traitement = NULL, date_creation = LOCALTIMESTAMP(0);
+        END IF;
+
+        -- Le livreur est parti : ses notifications sont traitées
+        IF NEW.statut = 'EnLivraison' THEN
+            UPDATE notification SET traitee = TRUE, date_traitement = LOCALTIMESTAMP(0)
+            WHERE id_commande = NEW.id_commande AND pour_role = 'Livreur' AND traitee = FALSE;
+        END IF;
+    ELSIF v_mode_change THEN
+        -- Le client a finalement choisi de venir lui-même : plus rien pour le livreur
+        UPDATE notification SET traitee = TRUE, date_traitement = LOCALTIMESTAMP(0)
+        WHERE id_commande = NEW.id_commande AND pour_role = 'Livreur' AND traitee = FALSE;
     END IF;
 
     -- Commande terminée : plus rien à traiter
-    IF NEW.statut IN ('Retiree', 'Vendue', 'Annulee') THEN
+    IF NEW.statut IN ('Retiree', 'Livree', 'Vendue', 'Annulee') THEN
         UPDATE notification
         SET traitee = TRUE, date_traitement = LOCALTIMESTAMP(0)
         WHERE id_commande = NEW.id_commande AND traitee = FALSE;
@@ -398,7 +530,7 @@ END;
 $$;
 
 CREATE TRIGGER trg_commande_apres
-AFTER INSERT OR UPDATE OF statut ON commande
+AFTER INSERT OR UPDATE ON commande
 FOR EACH ROW EXECUTE FUNCTION trg_commande_apres();
 
 
@@ -467,12 +599,16 @@ SELECT
     s.nom                                                    AS service,
     s.prioritaire,
     c.id_utilisateur,
+    c.mode_recuperation,
+    c.adresse_livraison,
+    c.frais_livraison,
     c.date_depot,
     c.date_retrait_prevue,
     c.date_prete,
     c.date_avertissement,
     c.date_retrait,
     c.date_vente,
+    c.date_livraison,
     c.prix_vente,
     c.statut,
     c.statut_paiement,
@@ -507,6 +643,16 @@ FROM vue_commande_solde v
 WHERE v.statut = 'EnRepassage'
 ORDER BY v.prioritaire DESC, v.date_depot;
 
+/* RG24 : file du livreur = toutes les commandes « à livrer » non terminées.
+   D'abord celles en route, puis les prêtes (express d'abord), puis celles encore à l'atelier. */
+CREATE VIEW vue_file_livraison AS
+SELECT v.*, (SELECT SUM(quantite) FROM ligne_commande l WHERE l.id_commande = v.id_commande)::INT AS nb_articles
+FROM vue_commande_solde v
+WHERE v.mode_recuperation = 'Livraison'
+  AND v.statut IN ('Deposee', 'EnLavage', 'EnRepassage', 'Prete', 'Avertie', 'EnLivraison')
+ORDER BY CASE v.statut WHEN 'EnLivraison' THEN 0 WHEN 'Prete' THEN 1 WHEN 'Avertie' THEN 1 ELSE 2 END,
+         v.prioritaire DESC, v.date_retrait_prevue, v.date_depot;
+
 /* RG14 : commandes prêtes depuis DelaiAvertissementJours -> l'application envoie l'email puis passe à « Avertie » */
 CREATE VIEW vue_commandes_a_avertir AS
 SELECT v.*
@@ -536,4 +682,4 @@ WHERE c.statut <> 'Annulee'
 GROUP BY p.date_paiement::DATE, p.mode_paiement;
 
 
-SELECT 'Base pressing_db créée (12 tables). Lancez maintenant 02_donnees_test.sql.' AS message;
+SELECT 'Base pressing_db créée (12 tables, livraison incluse). Lancez maintenant 02_donnees_test.sql.' AS message;

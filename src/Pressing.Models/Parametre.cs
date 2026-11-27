@@ -15,6 +15,7 @@
 //      SmtpServeur               smtp.gmail.com      serveur d'envoi des emails
 //      SmtpPort                  587                 port du serveur d'envoi
 //      EmailExpediteur           ...@...             adresse qui envoie les emails
+//      FraisLivraison            1000                frais ajoutés si le client choisit la livraison (RG21)
 //
 //  SÉCURITÉ : le MOT DE PASSE du compte email n'est JAMAIS ici, ni dans
 //  le code. Il est uniquement dans appsettings.json (fichier ignoré
@@ -28,7 +29,8 @@
 //  "DelaiGraceJours" à la main (pas de faute de frappe possible).
 //
 //  Utilisé par : écran Paramètres (administrateur), le service d'emails,
-//  l'impression du ticket, le calcul des commandes à avertir / à vendre.
+//  l'impression du ticket, le calcul des commandes à avertir / à vendre,
+//  le calcul des frais de livraison au dépôt.
 // =====================================================================
 
 namespace Pressing.Models;
@@ -76,4 +78,5 @@ public class Parametre
     public const string SmtpServeur = "SmtpServeur";
     public const string SmtpPort = "SmtpPort";
     public const string EmailExpediteur = "EmailExpediteur";
+    public const string FraisLivraison = "FraisLivraison";
 }

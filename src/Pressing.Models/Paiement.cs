@@ -9,7 +9,9 @@
 //  Un client peut payer :
 //    - tout au dépôt              -> 1 paiement (Moment = Depot)
 //    - tout au retrait            -> 1 paiement (Moment = Retrait)
-//    - une avance puis le reste   -> 2 paiements (Depot + Retrait),
+//    - tout au livreur            -> 1 paiement (Moment = Livraison)
+//    - une avance puis le reste   -> 2 paiements (Depot + Retrait,
+//                                    ou Depot + Livraison),
 //                                    chacun avec son propre mode
 //
 //  Colonnes en base (snake_case)   ->   propriétés en C# (PascalCase)
@@ -25,7 +27,8 @@
 //  paiement de la commande (Non payé / Partiellement payé / Payé) et
 //  REFUSE un paiement qui dépasserait le montant total (RG10).
 //
-//  Utilisé par : écran Nouveau dépôt (avance), écran Retrait (reste),
+//  Utilisé par : écran Nouveau dépôt (avance), écrans Retrait et
+//  Livraisons (reste),
 //  tableau de bord (encaissé du jour par mode).
 // =====================================================================
 
@@ -51,7 +54,7 @@ public class Paiement
     /// <summary>Comment le client a payé : Espèces, Orange Money ou MTN Mobile Money.</summary>
     public ModePaiement ModePaiement { get; set; } = ModePaiement.Especes;
 
-    /// <summary>Quand le client a payé : au dépôt ou au retrait.</summary>
+    /// <summary>Quand le client a payé : au dépôt, au retrait ou à la livraison.</summary>
     public MomentPaiement Moment { get; set; } = MomentPaiement.Depot;
 
     /// <summary>Date et heure du paiement (remplie par la base).</summary>

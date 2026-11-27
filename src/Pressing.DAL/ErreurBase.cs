@@ -10,6 +10,9 @@
 //       PR003  retrait impossible : il reste à payer
 //       PR005  changement de statut interdit
 //       PR006  service non modifiable après le début du traitement
+//       PR007  livraison sans adresse
+//       PR008  commande « à récupérer » envoyée en livraison
+//       PR009  livraison non modifiable (déjà partie ou commande terminée)
 //
 //  2) Les erreurs STANDARD de PostgreSQL :
 //       23505  doublon (téléphone, email, login déjà utilisé...)
