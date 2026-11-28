@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Active l'envoi réel des emails (Infrastructure/MailKitEmailSender.cs) -->
+    <DefineConstants>$(DefineConstants);MAILKIT</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2739.15" />
+    <PackageReference Include="MailKit" Version="4.9.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Pressing.DAL\Pressing.DAL.csproj" />
+    <ProjectReference Include="..\..\src\Pressing.Models\Pressing.Models.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Interface HTML/CSS/JS -->
+    <Content Include="WebUI\www\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Configuration locale (mots de passe) : copiée à côté de l'exe, jamais envoyée sur GitHub -->
+    <Content Include="appsettings.json" Condition="Exists('appsettings.json')" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

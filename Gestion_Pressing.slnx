@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Pressing.DAL/Pressing.DAL.csproj" />
+    <Project Path="src/Pressing.Models/Pressing.Models.csproj" />
+  </Folder>
+  <Folder Name="/app/">
+    <Project Path="Code_Membre5_WebUI/Code_Membre5/Pressing.Membre5.Demo.csproj" />
+  </Folder>
+</Solution>

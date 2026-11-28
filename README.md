@@ -1,9 +1,10 @@
 # PressiGest – Gestion de pressing
 
-Application de bureau Windows qui suit chaque vêtement **du dépôt au retrait** :
-le caissier enregistre la commande avec son service, l'application l'envoie au laveur
-ou directement au repasseur, le client reçoit un email quand sa commande est prête,
-et une commande non retirée un mois après est annoncée puis vendue.
+Application de bureau Windows qui suit chaque vêtement **du dépôt au retrait ou à la livraison** :
+le caissier enregistre la commande avec son service et le choix du client (retrait au pressing
+ou livraison à domicile), l'application l'envoie au laveur ou directement au repasseur,
+le client reçoit un email quand sa commande est prête, le livreur apporte les commandes
+à livrer, et une commande non retirée un mois après est annoncée puis vendue.
 
 Projet de groupe – Keyce Informatique & Intelligence Artificielle, Bachelor 2.
 Référence fonctionnelle : **Cahier des charges v2** (dossier `docs/`).
@@ -14,15 +15,17 @@ Référence fonctionnelle : **Cahier des charges v2** (dossier `docs/`).
 
 | Module | Ce qu'il fait |
 | --- | --- |
-| Connexion et utilisateurs | Connexion par identifiant, 4 rôles, menu adapté au rôle |
-| Clients | Fiche client (téléphone obligatoire, email facultatif), historique, reste à payer |
+| Connexion et utilisateurs | Connexion par identifiant, 5 rôles, menu adapté au rôle |
+| Clients | Fiche client (téléphone et email obligatoires), adresse, historique, reste à payer |
 | Services et tarifs | 4 services, prix fixe par vêtement **et** par service (grille de tarifs) |
-| Dépôt | Client, service, vêtements, total automatique, paiement, ticket imprimé |
+| Dépôt | Client, service, vêtements, **retrait ou livraison**, total automatique, paiement, ticket imprimé |
 | Atelier | Files du laveur et du repasseur, express en premier, notification à chaque nouvelle commande |
-| Paiements | Seulement notés : espèces, Orange Money, MTN Mobile Money ; paiement en 1 ou 2 fois |
+| Paiements | Seulement notés : espèces, Orange Money, MTN Mobile Money ; au dépôt, au retrait ou au livreur |
 | Retrait | Recherche par ticket ou téléphone, paiement du reste, validation |
+| Livraison | File du livreur dès le dépôt, notifications, départ, paiement du reste, « Livrée » ou échec |
 | Emails | « Commande prête » et « Avertissement de mise en vente », envoyés automatiquement |
 | Ventes | Vente des vêtements non retirés après avertissement et délai de grâce |
+| Paramètres | Délais, frais de livraison, coordonnées du pressing, compte email |
 | Tableau de bord | Commandes par statut, encaissé du jour, alertes |
 
 ## Rôles
@@ -30,9 +33,10 @@ Référence fonctionnelle : **Cahier des charges v2** (dossier `docs/`).
 | Rôle | Ce qu'il fait |
 | --- | --- |
 | Administrateur (gérant) | Tout, plus : comptes, services, prix, paramètres, annulation, ventes |
-| Caissier | Clients, dépôts, paiements, retraits, tickets |
+| Caissier | Clients, dépôts (choix retrait ou livraison), paiements, retraits, tickets |
 | Laveur | Reçoit les commandes à laver, commence et termine le lavage |
 | Repasseur | Reçoit les commandes lavées et les « repassage seul », termine le repassage |
+| Livreur | Voit dès le dépôt les commandes à livrer, part en livraison, encaisse le reste, valide « Livrée » ou signale un échec |
 
 ## Services et circuit d'une commande
 
@@ -44,13 +48,18 @@ Référence fonctionnelle : **Cahier des charges v2** (dossier `docs/`).
 | Repassage seul | **Directement** le repasseur |
 
 ```
-Déposée → En lavage → En repassage → Prête → Retirée
-                          ↑             │
-      (repassage seul) ───┘             └─ 30 jours sans retrait → Avertie → 7 jours → Vendue
-Annulée : possible tant que la commande n'est ni retirée ni vendue (administrateur)
+Déposée → En lavage → En repassage → Prête → Retirée                 (client qui vient)
+                          ↑             ├─ En livraison → Livrée      (client livré)
+      (repassage seul) ───┘             │       └─ échec → retour à Prête
+                                        └─ 30 jours sans retrait → Avertie → 7 jours → Vendue
+Annulée : possible avant le retrait, le départ en livraison ou la vente (administrateur)
 ```
 
-- Passage à **Prête** → email « commande prête » au client (ou notification à l'administrateur si le client n'a pas d'email).
+- **Au dépôt**, le client choisit **retrait** ou **livraison**. Livraison : adresse du client proposée,
+  frais de livraison ajoutés au total (paramètre, 1 000 FCFA par défaut), notification au livreur **dès le dépôt**.
+- Passage à **Prête** → email « commande prête » au client (en cas d'échec d'envoi, notification à l'administrateur) ;
+  pour une livraison, le livreur est notifié « Prête à livrer ».
+- **Livrée** seulement si tout est payé (le reste peut être payé au livreur).
 - **30 jours** après « Prête » sans retrait → email d'avertissement, statut **Avertie**.
 - **7 jours** de grâce après l'avertissement → l'administrateur peut marquer la commande **Vendue**.
 
@@ -111,6 +120,7 @@ Gestion_Pressing/
 | caissier1 | Caisse@2026 | Caissier |
 | laveur1 | Laveur@2026 | Laveur |
 | repasseur1 | Repasse@2026 | Repasseur |
+| livreur1 | Livre@2026 | Livreur |
 
 À changer avant la démonstration.
 
@@ -120,7 +130,7 @@ Gestion_Pressing/
 
 - **Base de données** : noms en minuscules avec `_` (`id_commande`, `numero_ticket`).
 - **C#** : `PascalCase` (`IdCommande`, `NumeroTicket`).
-- Statuts et rôles stockés **sans accents** : `Deposee`, `EnLavage`, `EnRepassage`, `Prete`, `Avertie`, `Retiree`, `Vendue`, `Annulee` · `Administrateur`, `Caissier`, `Laveur`, `Repasseur`.
+- Statuts et rôles stockés **sans accents** : `Deposee`, `EnLavage`, `EnRepassage`, `Prete`, `Avertie`, `EnLivraison`, `Livree`, `Retiree`, `Vendue`, `Annulee` · `Administrateur`, `Caissier`, `Laveur`, `Repasseur`, `Livreur` · `Retrait`, `Livraison`.
 - Montants en **FCFA**, nombres entiers.
 
 ## Répartition du travail
@@ -130,7 +140,7 @@ Gestion_Pressing/
 | Membre 1 (Joycy) | Base de données, Pressing.Models, Pressing.DAL |
 | Membre 2 | Connexion, menu par rôle, utilisateurs, services et tarifs, paramètres, tableau de bord |
 | Membre 3 | Clients, nouveau dépôt, paiement au dépôt, ticket |
-| Membre 4 | Écrans Lavage et Repassage, liste des commandes, historique, annulation |
+| Membre 4 | Écrans Lavage, Repassage et Livraisons, liste des commandes, historique, annulation |
 | Membre 5 | Retrait, emails (MailKit), notifications, avertissements et ventes |
 
 ## Travailler avec Git
