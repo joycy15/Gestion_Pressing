@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PressiGest | Espace de gestion</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<aside class="side">
+  <div class="brand"><span class="logo">P</span><div><b>PressiGest</b><small>Gestion de pressing</small></div></div>
+  <nav id="nav"></nav>
+  <div class="user"><span class="av" id="av"></span><div class="who"><b id="un"></b><small id="ur"></small></div><button class="lo" id="logout" title="Se déconnecter">⎋</button></div>
+</aside>
+<main>
+  <header class="top">
+    <div><h1 id="title"></h1><p id="sub"></p></div>
+    <button class="btn" id="sim">Synchroniser</button>
+  </header>
+  <div class="demo" id="status"></div>
+  <section id="view"></section>
+</main>
+<div id="toast"></div>
+<div id="modal" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
